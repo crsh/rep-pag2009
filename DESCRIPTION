@@ -1,0 +1,28 @@
+Package: reppag2009
+Title: Data and function for the replication of Paxton & Green (2009) "" by Verschuere et al. (in prep)
+Version: 0.0.0.9000
+Authors@R: c(
+    person(
+        "Frederik", "Aust"
+        , role = c("aut", "cre")
+        , email = "frederik.aust@uni-koeln.de"
+        , comment = c(ORCID = "0000-0003-4900-788X"))
+  )
+Description: This package contains the data and functions used to blind the raw data of the replication of Paxton & Green (2009) and to perform the analysis. The package was used to produce the results reported in Verschuere et al. (in prep).
+License: CC BY 4.0
+Encoding: UTF-8
+Language: en
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.1
+Suggests: 
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
+Imports: 
+    rlang,
+    tarchetypes,
+    targets,
+    readxl,
+    janitor
+Depends: 
+    R (>= 2.10)
+LazyData: true
