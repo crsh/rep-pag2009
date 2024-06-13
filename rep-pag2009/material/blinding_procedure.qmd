@@ -1,0 +1,128 @@
+---
+title: "Blinding procedure"
+author: "Frederik Aust"
+date: "`r Sys.Date()`"
+
+toc: true
+number-sections: true
+reference-location: margin
+
+highlight-style: github
+theme: lumen
+
+execute:
+  keep-md: true
+
+format:
+  html:
+    code-fold: true
+    standalone: true
+    embed-resources: true
+    self-contained: true
+    link-external-icon: true
+    citations-hover: true
+    footnotes-hover: true
+---
+
+```{r}
+#| label: init
+#| include: false
+
+library("ggplot2")
+library("patchwork")
+library("ggforce")
+library("brms")
+```
+
+# Introduction
+
+
+
+## Experimental procedure
+
+![Experimental procedure](./procedure.png)
+
+The design of the study involves two factors and one continuous covariate:
+
+1. **Condition**: The first factor was experimentally manipulated within subject. It related to whether participants made their prediction prior to or after seeing the outcome of the coin flip. Hence, this factor manipulated whether there was an `Opportunity` or `No Opportunity` to cheat.
+2. **Correct**: The second factor was measured and related to whether participant's prediction was correct (`win`) or incorrect (`loss`).
+3. **Dishonesty**: The continuous covariate was a measured index of participtans willingness to dishonestly claim a reward and was measured as the proportion of trials in which participants had the opportunity to cheat and claimed a reward.
+
+We will examine the effect of these predictors on three outcomes:
+
+1. Response times
+2. fMRI BOLD signal in the dorso-lateral prefrontal cortex (DLPFC)
+3. fMRI BOLD signal in the anterior cingulate cortex (ACC)
+
+## Blinding procedure
+
+To conduct the preregistered sequential blinded analysis, we sought to devise a procedure that meets the following criteria.
+The blinded data should
+
+1. retain information about the shape of the distribution of the data to inform our choice of the appropriate distributional assumptions in our analytic model,
+2. retain information about participants variability around the average effects to facilitate devising appropriate weakling regularizing priors on the random effect variances in our analytic model (we do not seek to test hypotheses about the structure or magnitude of the individual differences and we are unaware of any previously published estimates in the literature that could inform our priors),
+3. obfuscate mean differences between the experimental conditions, and
+4. obfuscate the relationship between dishonesty and mean differences between the experimental conditions.
+
+To meet these criteria, obfuscation of the differences between experimental conditions by equalizing cell means (Dutilh, Sarafoglou, & Wagenmakers, 2021).
+fMRI bold signals can be assumed to be approximately normally distributed.
+Hence, equalizing cell means is straight forward.
+We will simply add a constant to each observation, such that each condition mean is equal to the grand average across all conditions.
+Equalizing cell means is more challenging for response times:
+Because means and variances of response time distributions are positively linearly related (Wagenmakers et al., 2007), equalizing cell *means* by adding a constant does not prevent reconstruction of the order of cell means from their standard deviations.
+To address this issue, we will equalize cell medians by multiplying each oberservation by a fixed factor, such that each condition median is equal to the grand median across all conditions and the standard deviations will be scaled accordingly.
+However the blinding of response times is additionally complicated by non-decision times in processing the stimulus display and executing the response are known to yield a shift in the response time distribution.
+Such shifts would also be scaled by simply multiplying the response times by a fixed factor.
+However, leaveing non-decision times approximately intact could help devise inform possible exclusion rules for too fast responses and devise regularizing priors to facilitate the estimation of our hierarchical Bayesian model.
+We will therefore estimate each participants non-decision time in a hierarchical lognormal model to equalize only the medians of the decision time.
+Specifically, we will subtract estimates of individual non-decision times from the respective response time distributions before equalizing their medians and finally adding individual non-decision times back in.
+We choose the shifted lognormal distribution for this because it provides a good fit to the distribution response times (Rouder et al, 2015).
+
+
+# Pilot data showcase
+
+To demonstrate the general approach I will first apply the blinding procedure to the pilot data from one subject.
+
+```{r}
+#| label: load-pilot-data
+
+data(pilot, package = "reppag2009")
+```
+
+First, consider the fMRI bold signal measured on each trial in the DLPFC and ACC, Figure\ @fig-pilot-data-fmri.
+The distributions are symmetric and approximately normal.
+
+```{r}
+#| label: fig-pilot-data-fmri
+
+dlpfc_plot <- ggplot(pilot) +
+  aes(x = dlpfc_activity, y = condition, fill = correct) +
+  geom_violin() +
+  geom_sina() +
+  # stat_summary(
+  #   fun.data = mean_cl_normal, shape = 21, position = position_dodge(width = 1), size = 2
+  # ) +
+  labs(x = "DLPFC bold signal", y = "Condition")
+
+acc_plot <- ggplot(pilot) +
+  aes(x = acc_activity, y = condition, fill = correct) +
+  geom_violin() +
+  geom_sina() +
+  # stat_summary(
+  #   fun.data = mean_cl_normal, shape = 21, position = position_dodge(width = 1), size = 2
+  # ) +
+  labs(x = "ACC bold signal", y = "Condition")
+
+dlpfc_plot + acc_plot + plot_layout(guides = "collect")
+```
+
+```{r}
+#| label: fig-pilot-data-fmri
+
+ggplot(pilot) +
+  aes(x = rt, y = condition, fill = correct) +
+  geom_violin() +
+  geom_sina()
+
+
+```
