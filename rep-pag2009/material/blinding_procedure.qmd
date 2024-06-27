@@ -28,12 +28,11 @@ format:
 #| label: init
 #| include: false
 
+library("dplyr")
 library("ggplot2")
 library("patchwork")
 library("ggforce")
 library("brms")
-
-options(contrasts = c("contr.sum", "contr.poly"))
 ```
 
 # Introduction
@@ -382,18 +381,22 @@ This same general procedure can be used to create a second version of the blinde
 
 # Extension to hierarchical data
 
-To accomodate the hierarchical nature of the data, I fit the lognormal model developed above to each participant individually to equalize the average decision times $\mu$. 
+To accomodate the hierarchical nature of the data, many sophisticated solutions are conceivable.
+After due considerations, I opted to take a simple approach that equalizes condition means and average decision times as well as any heterogeneity in effects between participants.
+It's understood that such heterogeneity is likely to be present in the data.
+What is more, it seems likely that the magnitude of the heterogenity is correlated with the size of the average effect.
+Hence, to avoid leaking information about the average effects into the blinded data, I opted to equalize means and average decision times at the participant level.
+This approach also works with minimal assumptions when participants provide no observations is some conditions (complete dishonesty in the opportunity condition).
 
-First, I simulated data for 50 from a three-parameter log-normal model to demonstrate the general approach.
-
+To demonstrate this procedure, I simulated data for 10 participants from a three-parameter log-normal model.
 
 ```{r}
 #| label: simulate-hierarchical-data
 #| cache: true
 
-set.seed(2)
+set.seed(27896)
 
-n <- 50
+n <- 10
 
 # Dishonesty scores ----
 
@@ -439,9 +442,9 @@ b_condition <- -0.5
 b_correct <- 0.33
 b_cond_cor <- -0.3
 
-sd_condition  <- 0.2
-sd_correct <- 0.2
-sd_cond_cor <- 0.2
+sd_condition  <- 0.3
+sd_correct <- 0.3
+sd_cond_cor <- 0.3
 
 fmri_b_0_i <- rep(b_0, n)
 fmri_b_condition_i <- rnorm(n, mean = b_condition, sd = sd_condition)
@@ -515,10 +518,16 @@ synth_dat <- dplyr::left_join(
     , id = factor(id)
   ) |>
   tidyr::unnest(cols = c("rt", "dlpfc_activity", "acc_activity")) |>
-  dplyr::ungroup()
+  dplyr::ungroup() |>
+  dplyr::select(
+    -c(ndt:fmri_b_cond_cor)
+    , -dplyr::ends_with("_c")
+    , -n
+  )
 ```
 
-
+Notice here, that we have see no losses in the opportunity condition for `r sum(dishonesty == 1)` participants.
+@fig-synth-data shows the condition means for the average of all 10 participants and for simulated participant 1.
 
 ```{r}
 #| label: fig-synth-data
@@ -526,12 +535,18 @@ synth_dat <- dplyr::left_join(
 
 synth_dat_peek <- summarize(
   synth_dat
-  , rt = mean_cl_normal(rt)
-  , acc_activity = mean_cl_normal(acc_activity)
-  , dlpfc_activity = mean_cl_normal(dlpfc_activity)
-  , .by = c("condition", "correct")
+  , rt = mean(rt)
+  , acc_activity = mean(acc_activity)
+  , dlpfc_activity = mean(dlpfc_activity)
+  , .by = c("id", "condition", "correct")
 ) |>
-  mutate(id = 0) |>
+  summarize(
+    rt = mean_cl_normal(rt)
+    , acc_activity = mean_cl_normal(acc_activity)
+    , dlpfc_activity = mean_cl_normal(dlpfc_activity)
+    , .by = c("condition", "correct")
+  ) |>
+  mutate(id = "Average") |>
   full_join(
     summarize(
       synth_dat
@@ -547,88 +562,160 @@ synth_dat_peek <- summarize(
     , values_to = "value"
   )
 
-filter(synth_dat_peek, id %in% c(0, 1)) |>
+filter(synth_dat_peek, id %in% c("Average", 1)) |>
   ggplot() +
     aes(y = condition, fill = correct) +
     geom_pointrange(
       aes(x = value$y, xmin = value$ymin, xmax = value$ymax)
       , orientation = "y", shape = 21, size = 1.25, position = position_dodge(0.5)
     ) +
+    labs(x = NULL) +
+    facet_grid(id ~ measure, scales = "free_x") +
+    labs(y = "Condition")
+```
+
+With the functions in this package, it's straight forward to apply the blinding procedure outline above to the data of each subject.
+
+First, I create a combined factor for `condition` and `correct` to ensure that the procedure works when cells are empty.
+Next, I precompile the model used to equalize average decision times to speed up the process.
+I then apply the blinding procedure to the merged data of each participant.
+Finally, I shuffle the participant-level predictor `dishonesty` to obfuscate the relationship between dishonesty and the experimental conditions.
+This is pointless in this case, because the dishonesty score can be recalculated from the number of `win` responses in the `op`-condition, but the same procedure can be applied to other independent predictors of cheating behavior.
+
+```{r}
+#| label: blinding-hierarchical-data
+
+library("reppag2009")
+
+synth_dat <- synth_dat |>
+  dplyr::mutate(int = interaction(condition, correct))
+
+lnorm_mod <- brms::brm(
+  rt ~ int
+  , family = brms::shifted_lognormal
+  , data = synth_dat
+  , warmup = 1
+  , iter = 2
+  , refresh = 0
+  , silent = 0
+) |>
+  suppressWarnings()
+
+blinded_synth_dat <- synth_dat |>
+  reppag2009::equalize_means(
+    cbind(acc_activity, dlpfc_activity) ~ id * condition * correct
+  ) |>
+  dplyr::reframe(
+    reppag2009::equalize_logmeans(
+      dplyr::pick(dplyr::everything())
+      , brmsfit = lnorm_mod
+      , warmup = 1000 
+      , iter = 2000
+      , cores = 2
+      , chains = 4
+      , refresh = 0
+      , silent = 0
+    )
+    , .by = id
+  ) |>
+  reppag2009::shuffle_variable(dishonesty ~ id) |>
+  dplyr::select(-int)
+```
+
+@fig-blinded-synth-data shows the condition means for the average of all 10 participants and for simulated participant 1.
+
+```{r}
+#| label: fig-blinded-synth-data
+#| fig-cap: "Blinded simulated response times, fMRI bold signal in the DLPFC, and ACC for 50 participants. Points represent condition medians and error bars interquartile range."
+
+blinded_synth_dat_peek <- summarize(
+  blinded_synth_dat
+  , rt = mean(rt)
+  , acc_activity = mean(acc_activity)
+  , dlpfc_activity = mean(dlpfc_activity)
+  , .by = c("id", "condition", "correct")
+) |>
+  summarize(
+    rt = mean_cl_normal(rt)
+    , acc_activity = mean_cl_normal(acc_activity)
+    , dlpfc_activity = mean_cl_normal(dlpfc_activity)
+    , .by = c("condition", "correct")
+  ) |>
+  mutate(id = "Average") |>
+  full_join(
+    summarize(
+      blinded_synth_dat
+      , rt = mean_cl_normal(rt)
+      , acc_activity = mean_cl_normal(acc_activity)
+      , dlpfc_activity = mean_cl_normal(dlpfc_activity)
+      , .by = c("id", "condition", "correct")
+    )
+  ) |>
+  tidyr::pivot_longer(
+    cols = c(rt, acc_activity, dlpfc_activity)
+    , names_to = "measure"
+    , values_to = "value"
+  )
+
+filter(blinded_synth_dat_peek, id %in% c("Average", 1)) |>
+  ggplot() +
+    aes(y = condition, fill = correct) +
+    geom_pointrange(
+      aes(x = value$y, xmin = value$ymin, xmax = value$ymax)
+      , orientation = "y", shape = 21, size = 1.25, position = position_dodge(0.5)
+    ) +
+    labs(x = NULL) +
     facet_grid(id ~ measure, scales = "free_x") +
     labs(y = "Condition")
 ```
 
 
+# Application to real data
+
+To apply this workflow to the real data, I provide a convenience function `read_raw_data()` to read in all XLSX-files in a given directory.
+The only assumption made here is that the response time data is in a column named `behavioral_response`, as was the case for the pilot data.
 
 ```{r}
-#| label: fit-hierarchical-log-normal-model
+#| label: blinding-individual-dataframes
+#| code-fold: false
+#| eval: false
 
-lognorm_formula <- bf(
-  # rt ~ 1 + condition * correct + (condition * correct | id)
-  rt ~ 1 + condition * correct + (1 | id)
-  , sigma ~ 1 + (1 | id)
-  , ndt ~ 1 + (1 | id)
-)
+reppag2009_data <- reppag2009::read_raw_data("./path/to/xlsx_files") |>
+  dplyr::mutate(int = interaction(condition, correct))
 
-ndt_inits <- list(Intercept_ndt = -5)
-
-mod_synth <- brm(
-  formula = lognorm_formula
-  , data = synth_dat
+lnorm_mod <- brms::brm(
+  rt ~ int
   , family = brms::shifted_lognormal
-  , chains = 3
-  , cores = 3
-  , iter = 1500
-  , warmup = 1000
-  , init = replicate(3, ndt_inits, simplify = FALSE)
-  , thin = 1
-  , control = list(adapt_delta = 0.95)
-  , seed = 123
-)
+  , data = reppag2009_data
+  , warmup = 1
+  , iter = 2
+) |>
+  suppressWarnings()
 
-lognorm_formula2 <- bf(
-  rt ~ 1 + condition * correct + (1 | id)
-  , sigma ~ 1 + id
-  , ndt ~ 1 + id
-)
-
-mod_synth2 <- brm(
-  formula = lognorm_formula2
-  , data = synth_dat
-  , family = brms::shifted_lognormal
-  , chains = 3
-  , cores = 3
-  , iter = 1500
-  , warmup = 1000
-  , init = replicate(3, ndt_inits, simplify = FALSE)
-  , thin = 1
-  # , control = list(adapt_delta = 0.99)
-  , seed = 123
-)
-
-
-```
-
-
-```{r}
-summary(mod_synth)
-summary(mod_synth2)
-```
-
-```{r}
-library("fitdistrplus")
-
-synth_dat |>
-  filter(n > 5) |>
-  summarize(
-    sln = fitdist(
-      rt
-      , "shifted_lnorm"
-      , method = "mle"
-      , start = list(meanlog = -0.5, sdlog = 0.5, shift = 0.05)
-    ) |> coef() |> t() |> as.data.frame()
-    , .by = c(id, correct, condition)
+blinded_reppag2009_data <- reppag2009_data |>
+  reppag2009::equalize_means(
+    cbind(acc_activity, dlpfc_activity) ~ id * condition * correct
   ) |>
-  tidyr::unnest(cols = sln) |>View()
- 
+  dplyr::reframe(
+    {
+      cat("Equalizing:", dplyr::cur_group_id(), "\n")
+      reppag2009::equalize_logmeans(
+        dplyr::pick(dplyr::everything())
+        , brmsfit = lnorm_mod
+        , warmup = 1000 
+        , iter = 2000
+        , cores = 2
+        , chains = 4
+        , refresh = 0
+      )
+    }
+    , .by = id
+  ) |>
+  reppag2009::shuffle_variable(dishonesty ~ id) |>
+  dplyr::select(-int)
+
+saveRDS(
+  blinded_reppag2009_data
+  , "blinded_reppag2009_data.rds"
+)
 ```

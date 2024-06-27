@@ -1,0 +1,19 @@
+---
+title: "Blinding procedure"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Blinding strategy}
+  %\VignetteEngine{quarto::html}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup}
+library(reppag2009)
+```

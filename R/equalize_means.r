@@ -81,43 +81,55 @@ equalize_means <- function(x, formula) {
 #' @importFrom rlang .data
 #' @export
 
-equalize_logmeans <- function(x, formula, ...) {
-  lnorm_mod <- brms::brm(
-    formula = formula
-    , data = x
-    , family = brms::shifted_lognormal
-    , ...
-  )
+equalize_logmeans <- function(x, formula = NULL, brmsfit = NULL, ...) {
+  if(is.null(brmsfit)) {
+    if(is.null(formula)) stop("Argument `formula` cannot be `NULL`.")
 
-  vars$lhs <- parse_formula(formula)
+    lnorm_mod <- brms::brm(
+      formula = formula
+      , data = x
+      , family = brms::shifted_lognormal
+      , ...
+    )
+  } else {
+    if(!is.null(formula)) warning("Argument `formula` is ignored if `brmsfit` is provided.")
+
+    lnorm_mod <- update(
+      brmsfit
+      , newdata = x
+      , ...
+    )
+  }
+
+  vars <- parse_formula(as.formula(lnorm_mod$formula))
 
   offsets <- tidybayes::epred_draws(
     lnorm_mod
     , dpar = c(mu = "mu", ndt = "ndt")
-    , newdata = x[, vars$lhs$rhs] |> unique()
+    , newdata = x[, vars$rhs] |> unique() |> droplevels()
     , re_formula = NULL
   ) |>
     dplyr::ungroup() |>
     dplyr::summarize(
       mu = stats::median(.data$mu)
       , ndt = stats::median(.data$ndt)
-      , .by = dplyr::all_of(vars$lhs$rhs)
+      , .by = dplyr::all_of(vars$rhs)
     ) |>
     dplyr::mutate(mu_offset = .data$mu - mean(.data$mu)) |>
-    dplyr::select(-.data$mu)
+    dplyr::select(-"mu")
 
   dplyr::left_join(
     x
     , offsets
-    , by = vars$lhs$rhs
+    , by = vars$rhs
   ) |>
   dplyr::mutate(
     dplyr::across(
-      !!vars$lhs$lhs
+      !!vars$lhs
       , .fns = ~ exp(log(.x - ndt) - mu_offset) + ndt
     )
   ) |>
-  dplyr::select(-.data$ndt, -.data$mu_offset)
+  dplyr::select(-"ndt", -"mu_offset")
 }
 
 parse_formula <- function(x) {
