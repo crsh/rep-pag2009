@@ -32,6 +32,8 @@ library("ggplot2")
 library("patchwork")
 library("ggforce")
 library("brms")
+
+options(contrasts = c("contr.sum", "contr.poly"))
 ```
 
 # Introduction
@@ -44,7 +46,7 @@ library("brms")
 
 The design of the study involves two factors and one continuous covariate:
 
-1. **Condition**: The first factor was experimentally manipulated within subject. It related to whether participants made their prediction prior to or after seeing the outcome of the coin flip. Hence, this factor manipulated whether there was an `Opportunity` or `No Opportunity` to cheat.
+1. **Condition**: The first factor was experimentally manipulated within subject. It related to whether participants made their prediction prior to or after seeing the outcome of the coin flip. Hence, this factor manipulated whether there was an `op`portunity or `noop`portunity to cheat.
 2. **Correct**: The second factor was measured and related to whether participant's prediction was correct (`win`) or incorrect (`loss`).
 3. **Dishonesty**: The continuous covariate was a measured index of participtans willingness to dishonestly claim a reward and was measured as the proportion of trials in which participants had the opportunity to cheat and claimed a reward.
 
@@ -68,20 +70,24 @@ To meet these criteria, obfuscation of the differences between experimental cond
 fMRI bold signals can be assumed to be approximately normally distributed.
 Hence, equalizing cell means is straight forward.
 We will simply add a constant to each observation, such that each condition mean is equal to the grand average across all conditions.
+
 Equalizing cell means is more challenging for response times:
 Because means and variances of response time distributions are positively linearly related (Wagenmakers et al., 2007), equalizing cell *means* by adding a constant does not prevent reconstruction of the order of cell means from their standard deviations.
-To address this issue, we will equalize cell medians by multiplying each oberservation by a fixed factor, such that each condition median is equal to the grand median across all conditions and the standard deviations will be scaled accordingly.
+To address this issue, we will approximately equalize cell medians by multiplying each oberservation by a fixed factor, such that each condition median is approximately equal to the grand median across all conditions and the standard deviations will be scaled accordingly.
+
 However the blinding of response times is additionally complicated by non-decision times in processing the stimulus display and executing the response are known to yield a shift in the response time distribution.
 Such shifts would also be scaled by simply multiplying the response times by a fixed factor.
 However, leaveing non-decision times approximately intact could help devise inform possible exclusion rules for too fast responses and devise regularizing priors to facilitate the estimation of our hierarchical Bayesian model.
-We will therefore estimate each participants non-decision time in a hierarchical lognormal model to equalize only the medians of the decision time.
+We will therefore estimate each participants non-decision time in a hierarchical log-normal model to equalize only the medians of the decision time.
 Specifically, we will subtract estimates of individual non-decision times from the respective response time distributions before equalizing their medians and finally adding individual non-decision times back in.
-We choose the shifted lognormal distribution for this because it provides a good fit to the distribution response times (Rouder et al, 2015).
+We choose the shifted log-normal distribution for this because it provides a good fit to the distribution response times (Rouder et al, 2015).
 
+Finally, we will shuffle the values of the dishonesty covariate to obfuscate the relationship between dishonesty and the experimental conditions.
+
+To demonstrate the general approach I will first apply the blinding procedure to the pilot data from a single subject.
+I will then show how to extend the procedure to hierachical data from multiple participants
 
 # Pilot data showcase
-
-To demonstrate the general approach I will first apply the blinding procedure to the pilot data from one subject.
 
 ```{r}
 #| label: load-pilot-data
@@ -89,40 +95,540 @@ To demonstrate the general approach I will first apply the blinding procedure to
 data(pilot, package = "reppag2009")
 ```
 
-First, consider the fMRI bold signal measured on each trial in the DLPFC and ACC, Figure\ @fig-pilot-data-fmri.
-The distributions are symmetric and approximately normal.
+## Equalizing fMRI bold signal
+
+First, consider the fMRI bold signal measured on each trial in the DLPFC and ACC shown in @fig-pilot-data-fmri A.
+In line with typical assumptions, the distributions appear symmetric.
+Because the research question concerns the effect of the experimental manipulation on the average bold signal, I opted to equalize the condition means by adding a constant to each observation such that the condition means are identical.
+
+@fig-pilot-data-fmri B show the equalized condition means in the blinded data.
+Note that the blinded data retains the shape of the distributions as well as differences in the spread of the distribution across conditions.
+This information can inform the choice of the appropriate modelling assumptions.
 
 ```{r}
-#| label: fig-pilot-data-fmri
+#| label: equalize-pilot-fmri
 
-dlpfc_plot <- ggplot(pilot) +
-  aes(x = dlpfc_activity, y = condition, fill = correct) +
-  geom_violin() +
-  geom_sina() +
-  # stat_summary(
-  #   fun.data = mean_cl_normal, shape = 21, position = position_dodge(width = 1), size = 2
-  # ) +
-  labs(x = "DLPFC bold signal", y = "Condition")
+fmri_equalizer <- pilot |>
+  dplyr::summarize(
+    acc_mean = mean(acc_activity)
+    , dlpfc_mean = mean(dlpfc_activity)
+    , .by = c("condition", "correct")
+) |>
+  dplyr::ungroup() |>
+  dplyr::mutate(
+    acc_offset = acc_mean - mean(acc_mean)
+    , dlpfc_offset = dlpfc_mean - mean(dlpfc_mean)
+  ) |>
+  dplyr::select(-acc_mean, -dlpfc_mean)
 
-acc_plot <- ggplot(pilot) +
-  aes(x = acc_activity, y = condition, fill = correct) +
-  geom_violin() +
-  geom_sina() +
-  # stat_summary(
-  #   fun.data = mean_cl_normal, shape = 21, position = position_dodge(width = 1), size = 2
-  # ) +
-  labs(x = "ACC bold signal", y = "Condition")
-
-dlpfc_plot + acc_plot + plot_layout(guides = "collect")
+blinded_pilot <- pilot |>
+  dplyr::left_join(
+    fmri_equalizer
+    , by = c("correct", "condition")
+  ) |>
+  dplyr::mutate(
+    acc_activity = acc_activity - acc_offset
+    , dlpfc_activity = dlpfc_activity - dlpfc_offset
+  )
 ```
 
 ```{r}
 #| label: fig-pilot-data-fmri
+#| fig-cap: "fMRI bold signal in the DLPFC and ACC of one pilot participant. (A) Unblinded data and (B) blinded data with equalized condition means. Points represent condition means and error bars standard deviations. The dashed vertical line represents the grand mean."
 
-ggplot(pilot) +
+pilot_plot <- list(
+  geom_violin()
+  , stat_summary(geom = "vline", aes(y = 0, xintercept = after_stat(x), group = 1), fun = mean, linetype = "22", orientation = "y")
+  , geom_sina()
+  , stat_summary(geom = "pointrange", fun.data = mean_sdl, fun.args = list(mult = 1), shape = 21, position = position_dodge(0.9), size = 1.25, color = "white")
+)
+
+dlpfc_plot <- ggplot(pilot) +
+  aes(x = dlpfc_activity, y = condition, fill = correct) +
+  pilot_plot +
+  xlim(-8, 8) +
+  labs(x = "DLPFC bold signal", y = "Condition")
+
+acc_plot <- ggplot(pilot) +
+  aes(x = acc_activity, y = condition, fill = correct) +
+  pilot_plot +
+  xlim(-3.25, 3.25) +
+  labs(x = "ACC bold signal", y = "Condition")
+
+blinded_dlpfc_plot <- ggplot(blinded_pilot) +
+  aes(x = dlpfc_activity, y = condition, fill = correct) +
+  pilot_plot +
+  xlim(-8, 8) +
+  labs(x = "DLPFC bold signal", y = "Condition")
+
+blinded_acc_plot <- ggplot(blinded_pilot) +
+  aes(x = acc_activity, y = condition, fill = correct) +
+  pilot_plot +
+  xlim(-3.25, 3.25) +
+  labs(x = "ACC bold signal", y = "Condition")
+
+dlpfc_plot + acc_plot +
+  blinded_dlpfc_plot + blinded_acc_plot + 
+  plot_layout(design = "AB\nCD", guides = "collect") +
+  plot_annotation(tag_levels = list(c("A", "", "B", "")))
+```
+
+## Equalizing response times
+
+@fig-pilot-data-rt A shows the distribution of response times in the pilot data.
+The response time distributions are positively skewed and the unblinded data exhibit some variation in condition means.
+To equalize condition means, I fit a log-normal model to the response times.
+
+### Review of the log-normal distribution
+
+A three-parameter log-normal distributed variable, $y \sim \log\mathcal{N}(\mu, \sigma, \delta)$, is parameterized the shift $\delta$, which shifts the distribution by a constant value without affecting its shape, as well as the mean $\mu$ and the standard deviation $\sigma$ of the unshifted distribution---that is, $\log(y - \delta) \sim \mathcal{N}(\mu, \sigma)$, @fig-lognormal-distribution.
+
+```{r}
+#| label: fig-lognormal-distribution
+#| fig-cap: "Effects decision time ($\\mu$, $\\sigma$) and non-decision time parameters ($\\delta$) on the location and shape of the three-parameter log-normal distribution."
+#| fig-height: 2
+#| fig-width: 6
+
+cols <- viridisLite::plasma(2, begin = 0.2, end = 0.8)
+linewidth <- 3
+
+layout(matrix(1:3, nrow = 1))
+
+par(mar = c(3, 0, 4, 0))
+curve(
+  brms::dshifted_lnorm(x, meanlog = 0.5, sdlog = 0.5, shift = 0.2)
+  , from = 0, to = 7
+  , axes = FALSE
+  , xlab = NA
+  , ylab = NA
+  , lwd = linewidth
+  , col = cols[1]
+  , cex.lab = 1.5
+)
+
+curve(
+  brms::dshifted_lnorm(x, meanlog = 1, sdlog = 0.5, shift = 0.2)
+  , add = TRUE
+  , lwd = linewidth
+  , col = cols[2]
+)
+
+mtext(bquote(mu), side = 1, line = 1)
+
+curve(
+  brms::dshifted_lnorm(x, meanlog = 0.7, sdlog = 0.5, shift = 0.2)
+  , from = 0, to = 7
+  , axes = FALSE
+  , xlab = NA
+  , ylab = NA
+  , lwd = linewidth
+  , col = cols[1]
+  , cex.lab = 1.5
+)
+
+curve(
+  brms::dshifted_lnorm(x, meanlog = 0.7, sdlog = 1, shift = 0.2)
+  , add = TRUE
+  , lwd = linewidth
+  , col = cols[2]
+)
+
+mtext(bquote(sigma), side = 1, line = 1)
+
+mtext("Decision time", side = 3, line = 1.5, at = -0.25, cex = 1)
+
+curve(
+  brms::dshifted_lnorm(x, meanlog = 0.7, sdlog = 0.5, shift = 0.2)
+  , from = 0, to = 7
+  , axes = FALSE
+  , xlab = NA
+  , ylab = NA
+  , lwd = linewidth
+  , col = cols[1]
+  , cex.lab = 1.5
+)
+
+curve(
+  brms::dshifted_lnorm(x, meanlog = 0.7, sdlog = 0.5, shift = 1)
+  , add = TRUE
+  , lwd = linewidth
+  , col = cols[2]
+)
+
+mtext(bquote(delta), side = 1, line = 1)
+
+mtext("Non-decision time", side = 3, line = 1.5, at = 3.5, cex = 1)
+```
+
+Applied to response time data, the shift $\delta$ represents a constant non-decision time, the mean $\mu$ the average decision time, and the standard deviation $\sigma$ the variability in the decision time.
+With respect to the distributions central tendencies, increases in $\mu$ produce increases in the mean and median of the distribution, whereas increases in $\sigma$ produce increases in the mean of the skewed distribution but not the median.
+The median of the log-normal distribution is given by $\exp(\mu) + \delta$.
+Increases in both $\mu$ and $\sigma$ produce increases in the spread of the distribution.
+
+### Equalization strategy
+
+In the log-normal model of response times, increases in decision time should be reflected in $\mu$.
+Hence, I opted to equalize $\mu$ across conditions.
+In estimating $\mu$ I assumed $\sigma$ and $\delta$ to be constant and, thus, they were not equalized.
+Thus, the blinded data retains the shape of the distributions as well as differences in the spread of the distribution across conditions.
+This information can inform the choice of the appropriate modelling assumptions.
+
+```{r}
+#| label: equalize-pilot-rt
+#| cache: true
+
+mod_pilot <- brm(
+  formula = rt ~ correct * condition
+  , data = pilot
+  , family = brms::shifted_lognormal
+  , chains = 4
+  , cores = 2
+  , iter = 2000
+  , warmup = 1000
+  , thin = 1
+  , seed = 123
+  , verbose = FALSE
+)
+
+naive_rt_equalizer <- pilot |>
+  dplyr::summarize(
+    rt_mean = mean(rt)
+    , .by = c("condition", "correct")
+  ) |>
+  dplyr::mutate(
+    rt_offset = rt_mean - mean(rt_mean)
+  ) |>
+  dplyr::select(-rt_mean)
+
+rt_equalizer <- tidybayes::epred_draws(
+  mod_pilot
+  , dpar = c(mu = "mu", ndt = "ndt")
+  , newdata = pilot[, c("condition", "correct")] |> unique()
+  , re_formula = NULL
+) |>
+  dplyr::summarize(
+    mu = median(mu)
+    , ndt = median(ndt)
+  ) |>
+  dplyr::ungroup() |>
+  dplyr::mutate(
+    mu_offset = mu - mean(mu)
+  ) |>
+  dplyr::select(-mu)
+
+blinded_pilot <- pilot |>
+  dplyr::left_join(
+    naive_rt_equalizer
+    , by = c("correct", "condition")
+  ) |>
+  dplyr::left_join(
+    rt_equalizer
+    , by = c("correct", "condition")
+  ) |>
+  dplyr::mutate(
+    naive_rt = rt - rt_offset
+    , log_rt = log(rt - ndt)
+    , log_rt = log_rt - mu_offset
+    , rt = exp(log_rt) + ndt
+  )
+```
+
+@fig-pilot-data-rt B and C show the effects of a simple blinding procedure that equalizes condition means and the more sophisticated procedure---based on the log-normal distribution---that equalizes $\hat\mu$.
+A few things are worth noting.
+First, owing to the skewed distributions, the simple blinding procedure equalizes the condition means but does not equalize the medians, @fig-pilot-data-rt B.
+The simple blinding procedure also does not affect the spread of the distributions across conditions, leaving the possibility to guess the order of condition averages from the spread.
+
+It may be suprising that the log-normal-based procedure does not perfectly equalize the condition means or medians, @fig-pilot-data-rt C.
+Means are not equalized because the log-normal distribution is skewed.
+Medians are not equalized because I did not estimate separate non-decision times $\delta$ for each condition.
+Because the median of the response time distribution $\widetilde{y} = \exp(\mu) + \delta$, the non-decision time $\delta$ would have to be estimated separately for each condition to perfectly equalize the medians.
+The remaining differences in the medians can inform auxillary modelling assumptions about effects of the experimental factors on the non-decision time.
+Importantly, the log-normal-based procedure equalizes the average decision times $\mu$ and adjusts the spread of the distributions---most notably for loss trials when there was an opportunity to cheat.
+
+```{r}
+#| label: fig-pilot-data-rt
+#| fig-cap: "Response times in the pilot data. (A) Unblinded data, (B) blinded data with equalized condition means, and (C) blinded data with equalized log means $\\mu$ in a three-parameter log-normal distribution. Diamonds represent condition medians, points conditions means, and error bars interquartile ranges. The dashed vertical line represents the grand mean."
+
+pilot_plot <- list(
+  geom_violin()
+  , geom_sina()
+  , stat_summary(geom = "vline", aes(y = 0, xintercept = after_stat(x), group = 1), fun = mean, linetype = "22", orientation = "y")
+  , stat_summary(geom = "pointrange", fun.data = tidybayes::median_qi, fun.args = list(.width = 2/3), shape = 23, position = position_dodge(0.9), size = 1.25, color = "white")
+  , stat_summary(geom = "point", fun = mean, shape = 21, position = position_dodge(0.9), size = 2, color = "white")
+  , xlim(0, 2300)
+  , labs(x = "Response time [ms]", y = "Condition")
+)
+
+rt_plot <- ggplot(pilot) +
   aes(x = rt, y = condition, fill = correct) +
-  geom_violin() +
-  geom_sina()
+  pilot_plot
+
+naive_blinded_rt_plot <- ggplot(blinded_pilot) +
+  aes(x = naive_rt, y = condition, fill = correct) +
+  pilot_plot
+
+blinded_rt_plot <- ggplot(blinded_pilot) +
+  aes(x = rt, y = condition, fill = correct) +
+  pilot_plot
+
+(plot_spacer() + rt_plot + plot_spacer() + plot_layout(widths = c(0.5, 1.25, 0.5))) /
+  (naive_blinded_rt_plot | blinded_rt_plot) +
+  plot_layout(guides = "collect") +
+  plot_annotation(tag_levels = "A")
+```
 
 
+This same general procedure can be used to create a second version of the blinded data that approximately replicates the size of the effects reported by Paxton & Greene (2009).
+
+# Extension to hierarchical data
+
+To accomodate the hierarchical nature of the data, I fit the lognormal model developed above to each participant individually to equalize the average decision times $\mu$. 
+
+First, I simulated data for 50 from a three-parameter log-normal model to demonstrate the general approach.
+
+
+```{r}
+#| label: simulate-hierarchical-data
+#| cache: true
+
+set.seed(2)
+
+n <- 50
+
+# Dishonesty scores ----
+
+# curve(dbeta((x - 0.5) / 0.5, 0.5, 0.5), 0, 1)
+dishonesty <- round((rbeta(n, 0.5, 0.5) + 0.5) / 1.5, 2)
+
+# Response time parmeters ----
+
+# curve(dshifted_lnorm(x, meanlog = log(0.200), sdlog = 1/2), 0, 0.5)
+ndt <- log(0.2)
+sd_ndt <- 1/2
+
+# curve(dshifted_lnorm(x, meanlog = -0.5, sdlog = 1/2), 0, 2)
+sigma <- -0.5
+sigma_sd <- 0.5
+
+# curve(dshifted_lnorm(x, meanlog = -0.75, sdlog = 1/3), 0, 1.5)
+b_0 <- -0.75
+sd_0 <- 1/3
+
+b_condition <- -0.5
+b_correct <- 0.33
+b_cond_cor <- -0.3
+
+sd_condition  <- 0.2
+sd_correct <- 0.2
+sd_cond_cor <- 0.2
+
+ndt_i <- rshifted_lnorm(n, meanlog = ndt, sdlog = sd_ndt)
+rt_sigma_i <- rshifted_lnorm(n, meanlog = sigma, sdlog = sigma_sd)
+rt_b_0_i <- rnorm(n, mean = b_0, sd = sd_0)
+
+rt_b_condition_i <- rnorm(n, mean = b_condition, sd = sd_condition)
+rt_b_correct_i <- rnorm(n, mean = b_correct, sd = sd_correct)
+rt_b_cond_cor_i <- rnorm(n, mean = b_cond_cor, sd = sd_cond_cor)
+
+# fMRI data parameters ----
+
+b_0 <- 0
+fmri_sigma <- 1
+
+b_condition <- -0.5
+b_correct <- 0.33
+b_cond_cor <- -0.3
+
+sd_condition  <- 0.2
+sd_correct <- 0.2
+sd_cond_cor <- 0.2
+
+fmri_b_0_i <- rep(b_0, n)
+fmri_b_condition_i <- rnorm(n, mean = b_condition, sd = sd_condition)
+fmri_b_correct_i <- rnorm(n, mean = b_correct, sd = sd_correct)
+fmri_b_cond_cor_i <- rnorm(n, mean = b_cond_cor, sd = sd_cond_cor)
+
+design <- expand.grid(
+  condition = c("op", "noop")
+  , correct = c("loss", "win")
+) |>
+  dplyr::mutate(
+    condition_c = dplyr::if_else(condition == "noop", 1, -1)
+    , correct_c = dplyr::if_else(correct == "loss", 1, -1)
+    , cond_cor_c = condition_c * correct_c
+  ) |>
+  tidyr::crossing(id = 1:n)
+
+coef <- data.frame(
+  id = 1:n
+  , dishonesty = dishonesty
+  , ndt = ndt_i
+  , rt_sigma = rt_sigma_i
+  , rt_b_0 = rt_b_0_i
+  , rt_b_condition = rt_b_condition_i
+  , rt_b_correct = rt_b_correct_i
+  , rt_b_cond_cor = rt_b_cond_cor_i
+  , fmri_sigma = fmri_sigma
+  , fmri_b_0 = fmri_b_0_i
+  , fmri_b_condition = fmri_b_condition_i
+  , fmri_b_correct = fmri_b_correct_i
+  , fmri_b_cond_cor = fmri_b_cond_cor_i
+)
+
+synth_dat <- dplyr::left_join(
+  design
+  , coef
+  , by = "id"
+) |>
+  dplyr::mutate(
+    n = dplyr::if_else(
+      condition == "noop"
+      , 35
+      , dplyr::if_else(
+        correct == "win"
+        , round(dishonesty * 70)
+        , 70 - round(dishonesty * 70)
+      )
+    )
+  ) |>
+  dplyr::rowwise() |>
+  dplyr::mutate(
+    rt = rshifted_lnorm(
+      n
+      , meanlog = rt_b_0 + condition_c * rt_b_condition + correct_c * rt_b_correct +
+        rt_b_cond_cor * cond_cor_c
+      , sdlog = rt_sigma
+      , shift = ndt
+    ) |> list(rt = _)
+    , dlpfc_activity = rnorm(
+      n
+      , mean = fmri_b_0 + condition_c * fmri_b_condition - correct_c * fmri_b_correct -
+        fmri_b_cond_cor * cond_cor_c
+      , sd = fmri_sigma * 2
+    ) |> list(dlpfc_activity = _)
+    , acc_activity = rnorm(
+      n
+      , mean = fmri_b_0 + condition_c * fmri_b_condition + correct_c * fmri_b_correct +
+        fmri_b_cond_cor * cond_cor_c
+      , sd = fmri_sigma
+    ) |> list(acc_activity = _)
+    , id = factor(id)
+  ) |>
+  tidyr::unnest(cols = c("rt", "dlpfc_activity", "acc_activity")) |>
+  dplyr::ungroup()
+```
+
+
+
+```{r}
+#| label: fig-synth-data
+#| fig-cap: "Simulated response times, fMRI bold signal in the DLPFC, and ACC for 50 participants. Points represent condition medians and error bars interquartile range."
+
+synth_dat_peek <- summarize(
+  synth_dat
+  , rt = mean_cl_normal(rt)
+  , acc_activity = mean_cl_normal(acc_activity)
+  , dlpfc_activity = mean_cl_normal(dlpfc_activity)
+  , .by = c("condition", "correct")
+) |>
+  mutate(id = 0) |>
+  full_join(
+    summarize(
+      synth_dat
+      , rt = mean_cl_normal(rt)
+      , acc_activity = mean_cl_normal(acc_activity)
+      , dlpfc_activity = mean_cl_normal(dlpfc_activity)
+      , .by = c("id", "condition", "correct")
+    )
+  ) |>
+  tidyr::pivot_longer(
+    cols = c(rt, acc_activity, dlpfc_activity)
+    , names_to = "measure"
+    , values_to = "value"
+  )
+
+filter(synth_dat_peek, id %in% c(0, 1)) |>
+  ggplot() +
+    aes(y = condition, fill = correct) +
+    geom_pointrange(
+      aes(x = value$y, xmin = value$ymin, xmax = value$ymax)
+      , orientation = "y", shape = 21, size = 1.25, position = position_dodge(0.5)
+    ) +
+    facet_grid(id ~ measure, scales = "free_x") +
+    labs(y = "Condition")
+```
+
+
+
+```{r}
+#| label: fit-hierarchical-log-normal-model
+
+lognorm_formula <- bf(
+  # rt ~ 1 + condition * correct + (condition * correct | id)
+  rt ~ 1 + condition * correct + (1 | id)
+  , sigma ~ 1 + (1 | id)
+  , ndt ~ 1 + (1 | id)
+)
+
+ndt_inits <- list(Intercept_ndt = -5)
+
+mod_synth <- brm(
+  formula = lognorm_formula
+  , data = synth_dat
+  , family = brms::shifted_lognormal
+  , chains = 3
+  , cores = 3
+  , iter = 1500
+  , warmup = 1000
+  , init = replicate(3, ndt_inits, simplify = FALSE)
+  , thin = 1
+  , control = list(adapt_delta = 0.95)
+  , seed = 123
+)
+
+lognorm_formula2 <- bf(
+  rt ~ 1 + condition * correct + (1 | id)
+  , sigma ~ 1 + id
+  , ndt ~ 1 + id
+)
+
+mod_synth2 <- brm(
+  formula = lognorm_formula2
+  , data = synth_dat
+  , family = brms::shifted_lognormal
+  , chains = 3
+  , cores = 3
+  , iter = 1500
+  , warmup = 1000
+  , init = replicate(3, ndt_inits, simplify = FALSE)
+  , thin = 1
+  # , control = list(adapt_delta = 0.99)
+  , seed = 123
+)
+
+
+```
+
+
+```{r}
+summary(mod_synth)
+summary(mod_synth2)
+```
+
+```{r}
+library("fitdistrplus")
+
+synth_dat |>
+  filter(n > 5) |>
+  summarize(
+    sln = fitdist(
+      rt
+      , "shifted_lnorm"
+      , method = "mle"
+      , start = list(meanlog = -0.5, sdlog = 0.5, shift = 0.05)
+    ) |> coef() |> t() |> as.data.frame()
+    , .by = c(id, correct, condition)
+  ) |>
+  tidyr::unnest(cols = sln) |>View()
+ 
 ```

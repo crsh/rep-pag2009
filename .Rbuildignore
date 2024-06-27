@@ -1,3 +1,10 @@
-^rep-pg2009\.Rproj$
+^rep-pg2009.Rproj$
 ^\.Rproj\.user$
 ^LICENSE\.md$
+^rep-pag2009$
+^Dockerfile$
+^README\.Rmd$
+^_make\.sh$
+^_run_docker\.sh$
+^_targets\.yaml$
+^data-raw$

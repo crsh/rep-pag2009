@@ -22,7 +22,10 @@ Imports:
     tarchetypes,
     targets,
     readxl,
-    janitor
+    janitor,
+    dplyr,
+    brms,
+    tidybayes
 Depends: 
-    R (>= 2.10)
+    R (>= 3.5.0)
 LazyData: true
