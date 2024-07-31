@@ -669,6 +669,201 @@ filter(blinded_synth_dat_peek, id %in% c("Average", 1)) |>
     labs(y = "Condition")
 ```
 
+<!-- ## Effect of equalizing decision times of DDM estimates
+
+Pilot data -->
+
+```{r}
+#| label: ez-ddm-analysis-pilot
+#| eval: false
+#| echo: false
+
+pilot_ddm <- pilot |>
+  summarize(
+    mrt = mean(rt / 100)
+    , vrt = sd(rt / 100)
+    , pw = sum(correct == "win") / 70
+    , .by = c(participant_id, condition)
+  ) |>
+  mutate(
+    pw = if_else(pw == 0, pw + 1/(2*70), pw)
+    , pw = if_else(pw %in% c(0.5, 1), pw - 1/(2*70), pw)
+  ) |>
+  tidyr::pivot_wider(
+    names_from = c("condition")
+    , values_from = c("mrt", "vrt", "pw")
+  )
+
+pilot_ddm_par <- EZ2::EZ2batch(
+  c(v_op=.11,v_noop=.21,z_op=.05,z_noop=.05,a_op=.09, a_noop=.09,ter=0.2)
+  , mrt_op ~ EZ2.mrt(v_op,z_op,a_op,s=0.1, ter)
+  , vrt_op ~ EZ2.vrt(v_op,z_op,a_op,s=0.1)
+  , pw_op ~ EZ2.pe(v_op,z_op,a_op)
+  , mrt_noop ~ EZ2.mrt(v_noop,z_noop,a_noop,s=0.1,ter)
+  , vrt_noop ~ EZ2.vrt(v_noop,z_noop,a_noop,s=0.1)
+  , pw_noop ~ EZ2.pe(v_noop,z_noop, a_noop)
+  , data = pilot_ddm[, -1]
+  , control = list(maxit = 10000)
+) |>
+  tibble::as_tibble() |>
+  tibble::rownames_to_column("id") |>
+  mutate(data = "original") |>
+  rename(par.ter_x = par.ter) |>
+  select(id, data, matches("par\\."))
+
+blinded_pilot_ddm <- blinded_pilot |>
+  summarize(
+    mrt = mean(rt / 100)
+    , vrt = sd(rt / 100)
+    , pw = sum(correct == "win") / 70
+    , .by = c(participant_id, condition)
+  ) |>
+  mutate(
+    pw = if_else(pw == 0, pw + 1/(2*70), pw)
+    , pw = if_else(pw %in% c(0.5, 1), pw - 1/(2*70), pw)
+  ) |>
+  tidyr::pivot_wider(
+    names_from = c("condition")
+    , values_from = c("mrt", "vrt", "pw")
+  )
+
+blinded_pilot_ddm_par <- EZ2::EZ2batch(
+  c(v_op=.11,v_noop=.21,z_op=.05,z_noop=.05,a_op=.09, a_noop=.09,ter=0.2)
+  , mrt_op ~ EZ2.mrt(v_op,z_op,a_op,s=0.1, ter)
+  , vrt_op ~ EZ2.vrt(v_op,z_op,a_op,s=0.1)
+  , pw_op ~ EZ2.pe(v_op,z_op,a_op)
+  , mrt_noop ~ EZ2.mrt(v_noop,z_noop,a_noop,s=0.1,ter)
+  , vrt_noop ~ EZ2.vrt(v_noop,z_noop,a_noop,s=0.1)
+  , pw_noop ~ EZ2.pe(v_noop,z_noop, a_noop)
+  , data = blinded_pilot_ddm[, -1]
+  , control = list(maxit = 10000)
+) |>
+  tibble::as_tibble() |>
+  tibble::rownames_to_column("id") |>
+  mutate(data = "blinded") |>
+  rename(par.ter_x = par.ter) |>
+  select(id, data, matches("par\\."))
+
+dplyr::bind_rows(
+  pilot_ddm_par
+  , blinded_pilot_ddm_par
+) |>
+  tidyr::pivot_longer(
+    cols = par.v_op:par.ter_x
+    , names_to = c("parameter", "condition")
+    , values_to = c("value")
+    , names_pattern = "par\\.(\\D+)_(\\D+)"
+  ) |>
+  ggplot() +
+    aes(x = value, y = condition, color = data) +
+    geom_point(
+      , position = position_dodge(0.9)
+      , shape = 21, size = 3
+      , orientation = "y"
+    ) +
+    facet_wrap(~parameter, scales = "free") +
+    labs(y = NULL, x = NULL) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+#| label: ez-ddm-analysis-synth
+#| eval: false
+#| echo: false
+
+synth_dat_ddm <- synth_dat |>
+  summarize(
+    mrt = mean(rt)
+    , vrt = sd(rt)
+    , pw = sum(correct == "win") / 70
+    , .by = c(id, condition)
+  ) |>
+  mutate(
+    pw = if_else(pw == 0, pw + 1/(2*70), pw)
+    , pw = if_else(pw %in% c(0.5, 1), pw - 1/(2*70), pw)
+  ) |>
+  tidyr::pivot_wider(
+    names_from = c("condition")
+    , values_from = c("mrt", "vrt", "pw")
+  )
+
+synth_ddm_par <- EZ2::EZ2batch(
+  c(v_op=.11,v_noop=.21,z_op=.05,z_noop=.05,a_op=.09, a_noop=.09,ter=0.2)
+  , mrt_op ~ EZ2.mrt(v_op,z_op,a_op,s=0.1, ter)
+  , vrt_op ~ EZ2.vrt(v_op,z_op,a_op,s=0.1)
+  , pw_op ~ EZ2.pe(v_op,z_op,a_op)
+  , mrt_noop ~ EZ2.mrt(v_noop,z_noop,a_noop,s=0.1,ter)
+  , vrt_noop ~ EZ2.vrt(v_noop,z_noop,a_noop,s=0.1)
+  , pw_noop ~ EZ2.pe(v_noop,z_noop, a_noop)
+  , data = synth_dat_ddm[, -1]
+  , control = list(maxit = 10000)
+) |>
+  tibble::as_tibble() |>
+  tibble::rownames_to_column("id") |>
+  mutate(data = "original")
+
+blinded_synth_dat_ddm <- blinded_synth_dat |>
+  summarize(
+    mrt = mean(rt)
+    , vrt = sd(rt)
+    , pw = sum(correct == "win") / 70
+    , .by = c(id, condition)
+  ) |>
+  mutate(
+    pw = if_else(pw == 0, pw + 1/(2*70), pw)
+    , pw = if_else(pw %in% c(0.5, 1), pw - 1/(2*70), pw)
+  ) |>
+  tidyr::pivot_wider(
+    names_from = c("condition")
+    , values_from = c("mrt", "vrt", "pw")
+  )
+
+blinded_synth_ddm_par <- EZ2::EZ2batch(
+  c(v_op=.11,v_noop=.21,z_op=.05,z_noop=.05,a_op=.09, a_noop=.09,ter=0.2)
+  , mrt_op ~ EZ2.mrt(v_op,z_op,a_op,s=0.1, ter)
+  , vrt_op ~ EZ2.vrt(v_op,z_op,a_op,s=0.1)
+  , pw_op ~ EZ2.pe(v_op,z_op,a_op)
+  , mrt_noop ~ EZ2.mrt(v_noop,z_noop,a_noop,s=0.1,ter)
+  , vrt_noop ~ EZ2.vrt(v_noop,z_noop,a_noop,s=0.1)
+  , pw_noop ~ EZ2.pe(v_noop,z_noop, a_noop)
+  , data = blinded_synth_dat_ddm[, -1]
+  , control = list(maxit = 10000)
+) |>
+  tibble::as_tibble() |>
+  tibble::rownames_to_column("id") |>
+  mutate(data = "blinded")
+```
+
+```{r}
+#| label: fig-ddm-analysis
+#| eval: false
+#| echo: false
+
+dplyr::bind_rows(
+  synth_ddm_par
+  , blinded_synth_ddm_par
+) |>
+  left_join(synth_dat[, c("id", "dishonesty")] |> unique(), by = "id") |>
+  rename(par.ter_x = par.ter) |>
+  select(id, dishonesty, data, matches("par\\.")) |>
+  tidyr::pivot_longer(
+    cols = par.v_op:par.ter_x
+    , names_to = c("parameter", "condition")
+    , values_to = c("value")
+    , names_pattern = "par\\.(\\D+)_(\\D+)"
+  ) |>
+  ggplot() +
+    aes(x = value, y = condition, color = data) +
+    stat_summary(
+      , fun.data = mean_cl_boot
+      , position = position_dodge(0.9)
+      , size = 1.25
+      , orientation = "y"
+    ) +
+    facet_grid(dishonesty > .7 ~ parameter, scales = "free") +
+    labs(y = NULL, x = NULL) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
 
 # Application to real data
 
@@ -681,7 +876,10 @@ The only assumption made here is that the response time data is in a column name
 #| eval: false
 
 reppag2009_data <- reppag2009::read_raw_data("./path/to/xlsx_files") |>
-  dplyr::mutate(int = interaction(condition, correct))
+  dplyr::mutate(
+    int = interaction(condition, correct)
+    , participant_id = factor(participant_id)
+  )
 
 lnorm_mod <- brms::brm(
   rt ~ int
@@ -692,9 +890,9 @@ lnorm_mod <- brms::brm(
 ) |>
   suppressWarnings()
 
-blinded_reppag2009_data <- reppag2009_data |>
+reppag2009_data <- reppag2009_data |>
   reppag2009::equalize_means(
-    cbind(acc_activity, dlpfc_activity) ~ id * condition * correct
+    cbind(acc_activity, dlpfc_activity) ~ participant_id * condition * correct
   ) |>
   dplyr::reframe(
     {
@@ -709,9 +907,9 @@ blinded_reppag2009_data <- reppag2009_data |>
         , refresh = 0
       )
     }
-    , .by = id
+    , .by = participant_id
   ) |>
-  reppag2009::shuffle_variable(dishonesty ~ id) |>
+  reppag2009::shuffle_variable(dishonesty_score ~ participant_id) |>
   dplyr::select(-int)
 
 saveRDS(
