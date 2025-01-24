@@ -1,0 +1,218 @@
+---
+title: "Comparison of different data versions"
+author: "Frederik Aust"
+date: "`r Sys.Date()`"
+
+toc: true
+number-sections: true
+reference-location: margin
+
+highlight-style: github
+theme: lumen
+
+execute:
+  keep-md: true
+
+format:
+  html:
+    code-fold: true
+    standalone: true
+    embed-resources: true
+    self-contained: true
+    link-external-icon: true
+    citations-hover: true
+    footnotes-hover: true
+---
+
+```{r}
+#| label: init
+#| include: false
+
+library("dplyr")
+library("purrr")
+```
+
+```{r}
+#| label: load_data
+
+data_version <- list.files(
+  path = "./../../data"
+  , pattern = "data\\d\\.rds$"
+  , full.names = TRUE
+)
+
+data_version <- data_version[-which(basename(data_version) == "blinded_data4.rds")]
+
+reppag2009_data <- lapply(data_version, readRDS)
+names(reppag2009_data) <- basename(data_version)
+names(reppag2009_data)
+```
+
+
+# Number of participants
+
+```{r}
+reppag2009_data_summary <- map(
+  .x = reppag2009_data
+  , .f = \(x) {
+    tibble::tibble(
+      # n = n_distinct(x$participant_id)
+      # ids = unique(x$participant_id) |>
+      #   list()
+      dishonesty = summarize(
+        x
+        , across(matches("dishonesty_[sh]"), unique)
+        , .by = participant_id
+      ) |>
+        rename(dishonesty = matches("dishonesty_[sh]")) |>
+        list()
+      , dishonesty_recalculated = {
+          if(any(grepl("reward", colnames(x)))) {
+            x <- filter(x, reward > 1)
+          }
+          summarize(
+            x
+            , wins = sum(correct == "win")
+            , trials = n()
+            , dishonesty_recalculated = wins / trials
+            , .by = c(participant_id, condition)
+          ) |> 
+          filter(condition == "op") |>
+          dplyr::select(-condition) |>
+          list()
+        }
+    )
+  }
+)
+
+reppag2009_data_summary_dishonesty <- map(
+  .x = reppag2009_data_summary
+  , .f = \(x) {
+      bind_cols(
+        arrange(x$dishonesty_recalculated[[1]], dishonesty_recalculated)
+        , arrange(x$dishonesty[[1]], dishonesty) |>
+          dplyr::select(-participant_id)
+      )
+  }
+)
+```
+
+It seems participant a few participants were removed in v5 and either added back in or replaced for v7.
+Some others are only added in v7 (e.g., 1050, 1054)
+
+::: {.callout-info}
+Need to check e-mails for included/excluded participants.
+:::
+
+```{r}
+#| label: tbl-participant-ids
+#| tbl-cap: "Participant IDs in each data version."
+
+knitr::kable(
+  map(
+    reppag2009_data_summary_dishonesty
+    , "participant_id"
+  ) |>
+    map(\(x) {
+      x <- as.numeric(as.character(x))
+      res <- rep(NA, 67)
+      res[x - 1000] <- x
+      res
+    }) |>
+    bind_cols()
+  , format = "markdown"
+)
+```
+
+
+# Dishonesty
+
+Let's first check the number of trials included in each data version.
+Something seems to be wrong in v5 relative to the other versions.
+Differences between v1 and v7 seem to be due to different numbers of trials due to differences in handling missing responses.
+For some reason a few participants have substantially fewer trials in v1 than v7 (e.g., 1002, 1037, 1047, 1049).
+Although v1 and v7 seem to be pretty close in original honesty scores, there are some differences that don't seem to be due to rounding.
+
+It's really weird that my recalculated dishonesty scores in v1 match those in v7 exactly, except where the number of trials differ!
+Yet they differ from those originally in the data.
+
+
+::: {.callout-info}
+Need to check e-mails for selection of trials.
+:::
+
+```{r}
+#| label: tbl-dishonesties
+#| tbl-cap: "Dishonesty scores in each data version."
+
+reppag2009_data_summary_dishonesty_joined <- map(
+    reppag2009_data_summary_dishonesty
+    , \(x) dplyr::select(
+      x
+      , participant_id
+      , trials
+      , dishonesty
+      , dishonesty_recalculated
+    )
+  ) |>
+    reduce(
+      full_join
+      , by = "participant_id"
+      , suffix = c("1", "5")
+    ) |>
+    arrange(participant_id) |>
+    dplyr::select(
+      participant_id
+      , matches("trials")
+      , matches("dishonesty\\d*$")
+      , everything()
+    )
+
+knitr::kable(reppag2009_data_summary_dishonesty_joined)
+```
+
+From this is seems that something went seriously wrong in v5.
+This does not inspire confidence and needs to be explained!
+
+```{r}
+plot(
+  dishonesty ~ dishonesty1
+  , data = reppag2009_data_summary_dishonesty_joined
+)
+abline(0, 1)
+
+plot(
+  dishonesty1 ~ dishonesty5
+  , data = reppag2009_data_summary_dishonesty_joined
+)
+abline(0, 1)
+
+plot(
+  dishonesty ~ dishonesty5
+  , data = reppag2009_data_summary_dishonesty_joined
+)
+abline(0, 1)
+```
+
+```{r}
+plot(
+  dishonesty_recalculated1 ~ dishonesty1
+  , data = reppag2009_data_summary_dishonesty_joined
+)
+abline(0, 1)
+
+plot(
+  dishonesty_recalculated5 ~ dishonesty5
+  , data = reppag2009_data_summary_dishonesty_joined
+)
+abline(0, 1)
+
+plot(
+  dishonesty_recalculated ~ dishonesty
+  , data = reppag2009_data_summary_dishonesty_joined
+)
+abline(0, 1)
+```
+
+It is also pretty weird that the dishonesty sores apparently were not shuffled.
+This is fine, but was implied otherwise in the e-mail conversation?

@@ -24,8 +24,696 @@ format:
     footnotes-hover: true
 ---
 
+# Procedure
+
+![Experimental procedure](../material/procedure.png)
+
+
+# Instructions
+
+> It has been suggested that people make more accurate predictions when they are motivated to predict accurately. To test this idea, we will be providing you with varying levels of financial incentive. Before each coin flip happens, an amount of money will appear on the screen (e.g., $0.25 or $5.00). This is the amount of money that you will win or lose depending on whether you accurately predict the outcome of the coin flip. If your prediction is correct, then you win the amount of money shown. If your prediction is incorrect, you lose the amount of money shown. The computer will keep track of all of your wins and losses. If, at the end of the experiment, your money total is positive, you will be paid that amount. If your total is negative or zero, you will not win any additional money. This is not pretend money. This is real money that you will be paid based on your performance in the experiment. However, your winnings cannot exceed $75. Press any key to continue.
+
+> It has been suggested that people’s ability to predict the future is disrupted if they have to record their predictions externally (i.e., outside of their minds). To test this idea, we will sometimes ask you to report your prediction in advance. In other cases, you will simply tell us after the fact whether or not your prediction was correct. Press any key to continue. 
+
+> Before each coin flip you will see the dollar amount that the trial is worth and, below it, the word ‘‘PREDICT’’ on the screen. At that point you should make your prediction in your mind. Next you will either see the word ‘‘RECORD’’ or the word ‘‘RANDOM.’’ If you see the word ‘‘RECORD’’ you should press the button on the LEFT to indicate that you are predicting HEADS or the button on the RIGHT to indicate that you are predicting TAILS. If you see the word ‘‘RANDOM’’ then you should randomly press either the LEFT button or the RIGHT button. When you make random responses, you should not follow any fixed pattern. Press any key to continue.
+
+> Next you will see the word ‘‘HEADS’’ or ‘‘TAILS’’ appear on the screen. This is the outcome of the computerized coin flip. After that you will see a screen that says ‘‘CORRECT?’’ At that point you must indicate whether or not your prediction was correct. If you were told to hit a random button, it does not matter which button you hit. Whether or not your prediction was correct depends only on the prediction you made in your mind and the outcome of the coin flip. Press the LEFT key to indicate (YES) that your prediction was correct. Press the RIGHT key to indicate (NO) that your prediction was incorrect. If you failed to form a prediction before the outcome of the coin flip was revealed, then you should indicate that your prediction was incorrect. After you have said whether your prediction was correct, the computer will tell you how much money you won or lost on that coin flip. Press any key to continue.
+
+> You will make a total of 210 predictions. You will do these in 7 groups of 30 trials. There will be about 10 seconds between the end of one trial and the beginning of the next one. After each group of trials you will have a chance to rest. The whole task will take a little less than 90 min. Press any key to continue. 
+
+> You are now ready to practice. Remember, first comes the dollar amount telling you what the coin flip is worth and the word ‘‘PREDICT.’’ At that point you will make your prediction privately to yourself. (Note that the dollar amounts presented here will not count toward your final total.) Then you will see either ‘‘RECORD’’ or ‘‘RANDOM.’’ If you see ‘‘RECORD’’ enter your prediction (LEFT key HEADS, RIGHT key for TAILS). If you see ‘‘RANDOM’’ press either the LEFT key or the RIGHT key randomly. Then you will see the outcome of the coin-flip (HEADS or TAILS). Then you will see the word ‘‘CORRECT?’’ on the screen. At that point you indicate whether the prediction you made in your mind was correct. Press the LEFT key (YES) if your prediction was correct or the RIGHT key (NO) if your prediction was incorrect. Then the computer will tell you how much money you won or lost on that coin flip. Then you wait for the next coin flip, which will begin with a dollar amount, as before. Press any key to begin practicing.
+
 ```{r}
 #| label: init
 #| include: false
 
+library("dplyr")
+library("tidyr")
+library("ggplot2")
+library("patchwork")
+library("ggforce")
+library("distributional")
+library("ggdist")
+library("brms")
+
+library("reppag2009")
+```
+
+```{r}
+#| label: load-data
+
+# data(reppag2009_blinded)
+reppag2009_blinded <- readRDS("./../../data/blinded_data5.rds")
+```
+
+
+# Response times
+
+A few participants seem to have much longer response times than the rest, @fig-mean-rt.
+
+```{r}
+#| label: fig-mean-rt
+#| fig-cap: "Average response times."
+
+reppag2009_blinded |>
+  summarize( 
+    rt = mean(rt)
+    , .by = c("participant_id", "condition", "correct")
+  ) |>
+  ggplot() +
+    aes(x = rt, y = condition, color = correct) +
+    geom_violin() +
+    geom_sina() +
+    stat_summary(fun.data = mean_cl_boot, geom = "pointrange", position = position_dodge(width = 0.9), size = 1.25) +
+    facet_wrap(~ 1) +
+    papaja::theme_apa()
+```
+
+```{r}
+reppag2009_slow_ids <- reppag2009_blinded |>
+  summarize( 
+    rt = mean(rt)
+    , .by = c("participant_id", "condition", "correct")
+  ) |>
+  filter(rt > 900) |>
+  select(participant_id) |>
+  unique()
+
+reppag2009_slow_ids
+```
+
+Both participants seem to be genuinely slow, maybe some responses from participant 1030 are delayed.
+Because I will compare the median response times of each condition, I will keep these participants in the data set.
+
+```{r}
+#| label: fig-individual-rt
+#| fig-cap: "Response times of individual participants."
+
+reppag2009_blinded |>
+  filter(participant_id %in% c(reppag2009_slow_ids$participant_id, sample(reppag2009_blinded$participant_id |> unique(), 2))) |>
+  ggplot() +
+    aes(x = rt, y = condition, color = correct) +
+    geom_violin(scale = "width") +
+    geom_sina(scale = "width") +
+    stat_summary(fun.data = mean_cl_boot, geom = "pointrange", position = position_dodge(width = 0.9), size = 1.25) +
+    facet_wrap(~ participant_id) +
+    papaja::theme_apa()
+```
+
+We also see some response times of 1 ms.
+As far as I understand Liyang, these were trials were responses were prior to the prompt.
+
+> there are very few trials that participants did not respond within the time limit so that the RTs of those trials are o. I changed o as 1ms to fit with the distribution of log-normal.
+
+I cannot detect that such trails appear occur more often in opportunity trials than in no-opportunity trials.
+I think the correct way to model these trials would be to specify some sort of zero-inflation component, but I don't think the data would support this.
+Hence, I think the best course of action, given the low number of trials and participants that this would affect, is to exclude these trials from consideration.
+
+```{r}
+# summarize(
+#   reppag2009_blinded
+#   , min_rt = min(rt)
+#   , .by = c("participant_id", "condition", "correct")
+# )
+
+reppag2009_blinded |>
+  dplyr::filter(rt < 2) |>
+  select(condition, correct) |>
+  table() |>
+  chisq.test() |>
+  (\(x) c(bf01 = unname(jab:::.jab01_w_a_n(w = x$statistic, a = 1, n = 1/sum(1/x$observed)))))()
+```
+
+
+::: {.callout-tip}
+Because the data have been median-equalized, I developed relative response time cut-offs values to excluce abbaraently fast and slow trials.
+The purpose of the cut-offs is to exclude trials that are likely to be due to unintended processes, such as attentional lapses.
+Skewed distributions and slow responses should be handled by the statistical model via a response-time like distribution.
+:::
+
+I inspected all participants' response distributions in each cell and selected cut-offs that excluded response times that seemed extreme when compared to the rest of the distribution.
+
+::: {.callout-note}
+I settled on cut-offs based on the log-transformed response times:
+
+- 2.75 standard deviations above the mean
+- 3.5 standard deviations below the mean
+:::
+
+@fig-rt-cut-offs shows the distribution of response times and in blue the responses considered "abberant" based on these cut-offs.
+
+
+```{r}
+#| label: fig-rt-cut-offs
+#| fig-cap: "Response times distributions for each condition. Blue points represent the responses considered 'abberant' based on these cut-offs."
+#| fig.width: 5
+#| fig.height: 30
+#| cache: true
+
+filter_test <- reppag2009_blinded |>
+  dplyr::filter(rt > 2) |>
+  dplyr::mutate(
+    log_rt = log(rt)
+    , extreme = if_else((rt > exp(mean(log_rt) + 2.75 * sd(log_rt))) | (rt < exp(mean(log_rt) - 3.5 * sd(log_rt))), "extreme", NA)
+    # extreme = if_else((rt > (median(rt) + 7*mad(rt))) | (rt < (median(rt) - 3*mad(rt))), "extreme", NA)
+    , .by = c("participant_id", "condition", "correct")
+  )
+
+filter_test |>
+  ggplot() +
+    aes(x = rt, y = condition, color = correct) +
+    geom_violin(scale = "width", position = position_dodge(0.9)) +
+    geom_boxplot(width = 0.2, position = position_dodge(0.9)) +
+    geom_swarm(data = filter_test |> dplyr::filter(!is.na(extreme)), aes(y = condition, shape = correct), color = "blue", position = position_dodge(0.9)) +
+    facet_wrap(~ participant_id, ncol = 2) +
+    papaja::theme_apa()
+```
+
+
+```{r}
+reppag2009_blinded_filtered <- reppag2009_blinded |>
+  dplyr::filter(rt > 2) |>
+  dplyr::mutate(
+    extreme = if_else((rt > exp(mean(log(rt)) + 2.75 * sd(log(rt)))) | (rt < exp(mean(log(rt)) - 3.5 * sd(log(rt)))), "extreme", NA)
+    , .by = c("participant_id", "condition", "correct")
+  ) |>
+  dplyr::filter(is.na(extreme)) |>
+  dplyr::select(-extreme)
+```
+
+# Dishonesty scores
+
+I'm still struggeling to understand the dishonesty scores.
+
+As we have discussed, it is not entirely clear, how the dishonesty scores were calculated.
+Dishonesty score reflect the relative number of claimed wins when there was an opportunity to cheat.
+It is unclear, if the scores are based on high and low reward trials or only on high reward trials.
+
+::: {.callout-tip}
+Given that the dishonesty scores are subject to measurement error, I believe the analysis should use an error-in-variables model to account for this.
+To do so, I will model the proportion of claimed wins as a binomially distributed variable with the dishonesty score as the parameter.
+This will allow us to propagate the error in the dishonesty score through the analysis.
+:::
+
+To do so, I need to know the number of trials that enter the calculation of the dishonesty score.
+I had asked Liyang a few times to include the counts but the current version of the data does not (maybe this is more difficult than I think).
+In theory, this is not a problem: I should be able to derive the these numbers for the high reward trials from the number of rows in the dataset.
+
+```{r}
+reppag2009_blinded <- reppag2009_blinded |>
+  mutate(
+    group = if_else(
+      dishonesty_score < 0.59, "honest"
+      , if_else(dishonesty_score > 0.69, "dishonest", "ambiguous"))
+  )
+
+reppag2009_blinded |> 
+  dplyr::summarise(
+    n = n()
+    , .by = c("participant_id", "condition")
+  ) |>
+  dplyr::select(n, condition) |>
+  table()
+```
+
+We have 70 high and 70 low reward opportunity trials.
+So, the trial counts for the binomail should simply flow from multiplying the dishonesty scores with the trial counts---unless the dishonesty scores were calculated from a subset of the trials.
+
+## Recalculating dishonesty scores
+
+::: {.callout-warning}
+I have not yet been able to reproduce the dishonesty scores in the data calculated by Liyang.
+This gives me pause.
+Liyang, do you have an idea what I might be missing here?
+:::
+
+The blinding procedure shuffled the dishonesty scores across participants, but at least the distribution of scores that I calculate from the trial counts should match the scores in the data.
+
+Here's what I tried. The current version of the data include two dishonest scores: `dishonesty_score` and `dishonesty_low_score`.
+From what I understand, the former is based on high reward trials, the latter is based on low reward trials.
+I further undestand that Liyang calculated the dishonesty scores after imposing response time cut-offs (e.g., exluding trails faster than 200 ms).
+The current version of the data includes all high-value trials---even fast ones---but no low-value trials.
+I tried calculating dishonesty scores based on all high-value trials and after excluding fast trials (> 200 ms).
+I also tried it after applying my own relative response time cut-offs developed above.
+I then compared the distribution of these scores to the scores in the data (calculated by Liyang).
+
+@tbl-dishonesty summarizes the prevalence of honest and dishonest participants according to the scores calculated by Liyang and the classification criteria used by @paxton2009.
+The distribution of dishonesty scores is visualized in @fig-dishonesty.
+The scores are very comparable to those in the original study.
+
+```{r}
+#| label: tbl-dishonesty
+#| tbl-cap: "Prevalence of honest and dishonest participants according to the classification criteria used by Paxton & Green (2009)."
+
+reppag2009_blinded |>
+  select(participant_id, group, dishonesty_score) |>
+  unique() |>
+  summarize(
+    n = n()
+    , mean_dishonesty = mean(dishonesty_score)
+    , sd_dishonesty = sd(dishonesty_score)
+    , .by = group
+  ) |>
+  papaja::apa_num(digits = 3, gt1 = FALSE) |>
+  knitr::kable()
+```
+
+![Distribution of dishonesty scores reported by Paxton & Green (2009), i.e. the relative frequency of claimed wins when there was an opportunity to cheat.](pag2009-dishonesty.jpeg){#fig-dishonesty-pag2009}
+
+```{r}
+#| label: fig-dishonesty
+#| fig-cap: "Distribution of dishonesty scores, i.e. the relative frequency of claimed wins when there was an opportunity to cheat."
+#| fig.height: 4
+
+reppag2009_blinded |>
+  select(participant_id, dishonesty_score) |>
+  unique() |>
+  ggplot() +
+    aes(x = dishonesty_score) +
+    geom_bar(width = 0.75) +
+    geom_vline(xintercept = c(0.59, 0.69), linetype = "dashed") +
+    scale_x_binned(n.breaks = 12, limits = c(0.4, 1)) +
+    papaja::theme_apa()
+```
+
+
+However the recalculated scores are consistenty lower, @fig-ordered-dishonesty-scores.
+
+
+```{r}
+#| label: fig-ordered-dishonesty-scores
+#| fig-cap: "Relationship between sorted dishonesty scores calculated by Liyang and recalculated by myself."
+
+dishonesty_score_original <- reppag2009_blinded |>
+  summarize(
+    dishonesty_score = unique(dishonesty_score)
+    , dishonesty_score_low = unique(dishonesty_low_score)
+    # , dishonesty_score = (dishonesty_score + dishonesty_score_low) / 2
+    , .by = c("participant_id", "condition")
+  ) |>
+  dplyr::filter(condition == "op") |>
+  dplyr::select(dishonesty_score) |>
+  dplyr::arrange(dishonesty_score)
+
+dishonesty_score_all_trials <- reppag2009_blinded |>
+  # dplyr::filter(reward > 4) |>
+  summarize(
+    dishonesty_high_score = sum(correct == "win") / n()
+    , .by = c("participant_id", "condition")
+  ) |>
+  dplyr::filter(condition == "op") |>
+  dplyr::select(dishonesty_high_score) |>
+  dplyr::arrange(dishonesty_high_score)
+
+dishonesty_score_no_fast_trials <- reppag2009_blinded |>
+  dplyr::filter(rt >= 200) |>
+  # dplyr::filter(reward > 4) |>
+  summarize(
+    dishonesty_high_score_no_fast = sum(correct == "win") / n()
+    , .by = c("participant_id", "condition")
+  ) |>
+  dplyr::filter(condition == "op") |>
+  dplyr::select(dishonesty_high_score_no_fast) |>
+  dplyr::arrange(dishonesty_high_score_no_fast)
+
+
+merged_dishonesty_scores <- dplyr::bind_cols(
+  dishonesty_score_original
+  , dishonesty_score_all_trials
+  , dishonesty_score_no_fast_trials
+) |> 
+  dplyr::rename(
+    dishonesty_score_original = dishonesty_score
+  )
+
+# View(merged_dishonesty_scores)
+
+p1 <- ggplot(merged_dishonesty_scores) +
+  aes(
+    x = dishonesty_high_score
+    , y = dishonesty_score_original
+  ) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
+  labs(
+    x = "Original scores"
+    , y = "Recalculated (all trials)"
+  ) +
+  theme_minimal()
+
+p2 <- ggplot(merged_dishonesty_scores) +
+  aes(
+    x = dishonesty_high_score_no_fast
+    , y = dishonesty_score_original
+  ) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
+  labs(
+    x = "Original scores"
+    , y = "Recalculated (trials > 200 ms)"
+  ) +
+  theme_minimal()
+
+p1 + p2 + plot_layout(guides = "collect")
+```
+
+
+@fig-dishonesty-recalc-distribution shows the distribution recalculated dishonesty scores based on all high-value trials and after excluding extreme response times.
+As indicated above the number of participants with high dishonesty scores is quite low.
+
+::: {.callout-warning}
+Interestingly, participants dishonesty seems to be quite consistent across opportunity and no-opportunity trials.
+This is unexpected to me.
+Does this indicate that participants did not adhere to instructions?
+Did they knowling claim wins when they were not supposed to?
+Does this mean that dishonest participants openly cheat?
+It seems this muddies comparisons between opportunity and non-oppotunity trials.
+:::
+
+```{r}
+#| label: fig-dishonesty-recalc-distribution
+#| fig-cap: "Distribution of recalculated dishonesty scores based on all high-value trials and after excluding extreme response times."
+
+reppag2009_blinded_filtered |>
+  # dplyr::filter(region == "acc") |>
+  select(participant_id, condition, correct) |>
+  summarize(
+    trials = n()
+    , wins = sum(correct == "win")
+    , f = wins / trials
+    , .by = c("participant_id", "condition")
+  ) |>
+  ggplot() +
+    aes(x = f) +
+    geom_bar(width = 0.75) +
+    geom_vline(xintercept = c(0.59, 0.69), linetype = "dashed") +
+    scale_x_binned(n.breaks = 12, limits = c(0.4, 1)) +
+    labs(x = "Dishonesty score") +
+    facet_wrap(~condition, ncol = 1) +
+    papaja::theme_apa()
+```
+
+
+```{r}
+#| label: dishonesty-correlation
+#| fig-cap: "Correlation between recalculated dishonesty scores between opportunity and no-opportunity trials."
+
+reppag2009_blinded_filtered |>
+  # filter(participant_id %in% levels(participant_id)[1:3]) |>
+  # dplyr::filter(region == "acc") |>
+  select(participant_id, condition, correct) |>
+  summarize(
+    trials = n()
+    , wins = sum(correct == "win")
+    # , posterior = dist_wrap(
+    #     "posterior_beta_trunc"
+    #     , a = 1
+    #     , b = 1
+    #     , s = wins
+    #     , n = trials
+    #     , lower = 0.5
+    #   )
+    , f = wins / trials
+    , .by = c("participant_id", "condition")
+  ) |>
+  select(-trials, -wins) |>
+  pivot_wider(names_from = condition, values_from = f) |>
+  # pivot_wider(names_from = condition, values_from = posterior) |>
+  ggplot() +
+    # stat_pointinterval(aes(xdist = op, y = median(noop))) +
+    # stat_pointinterval(aes(ydist = noop, x = median(op)))
+    geom_abline(intercept = 0.5, slope = 1, linetype = "dashed") +
+    geom_point(
+      aes(x = noop, y = op)
+      , fill = "black"
+      , color = "white", shape = 21, size = 2.5
+    ) +
+    labs(
+      x = "Dishonesty score for No-Opportunity trials"
+      , y = "Dishonesty score for Opportunity trials"
+    ) +
+    papaja::theme_apa()
+```
+
+
+```{r}
+dishonesty_cor2 <- with(
+  reppag2009_blinded_filtered |> 
+    select(participant_id, condition, correct) |>
+    summarize(
+      trials = n()
+      , wins = sum(correct == "win")
+      # , posterior = dist_wrap(
+      #     "posterior_beta_trunc"
+      #     , a = 1
+      #     , b = 1
+      #     , s = wins
+      #     , n = trials
+      #     , lower = 0.5
+      #   )
+      , f = wins / trials
+      , .by = c("participant_id", "condition")
+    ) |>
+    select(-trials, -wins) |>
+    pivot_wider(names_from = condition, values_from = f)  
+  , cor.test(op, noop)
+)
+
+dishonesty_cor2
+
+1/jab::jab(dishonesty_cor2, prior = \(x) dbeta((x/2)+0.5, 5, 5)/2)
+```
+
+
+### Low-value trials
+
+On the question of whether we should include low-value trials in the dishonesty score calculation, I looked at the correlation between the two.
+Descriptively the correlation close to $\hat{r} = 0$, but the approximate Bayesian evidence for the absence of a correlation is anecdotal.
+
+```{r}
+#| label: fig-dishonesty-correlation
+#| fig-cap: "Correlation between dishonesty scores based on high and low reward trials."
+
+reppag2009_blinded |>
+  summarize(
+    dishonesty_score = mean(dishonesty_score)
+    , dishonesty_low_score = mean(dishonesty_low_score)
+    , .by = c("participant_id", "condition")
+  ) |>
+  dplyr::filter(condition == "op") |>
+  ggplot() +
+    aes(x = dishonesty_score, y = dishonesty_low_score) +
+    geom_hline(yintercept = 0.5, linetype = "dashed", color = grey(0.7)) +
+    geom_vline(xintercept = 0.5, linetype = "dashed", color = grey(0.7)) +
+    geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
+    geom_point() +
+    theme_minimal()
+```
+
+```{r}
+dishonesty_cor <- with(
+  reppag2009_blinded |> 
+    summarize(
+      dishonesty_score = mean(dishonesty_score)
+      , dishonesty_low_score = mean(dishonesty_low_score)
+      , .by = c("participant_id", "condition")
+    ) |>
+    dplyr::filter(condition == "op") |> 
+    select(dishonesty_score, dishonesty_low_score)    
+  , cor.test(dishonesty_score, dishonesty_low_score)
+)
+
+dishonesty_cor
+
+jab::jab(dishonesty_cor, prior = \(x) dbeta((x/2)+0.5, 5, 5)/2)
+```
+
+::: {.callout-note}
+There is no strong indication that any participants compensated cheating in high-reward trials by overclaiming losses in low-reward trials (participants dishonesty in low-value dishonsty scores <= 0.4 look a bit suspicous, though).
+:::
+
+Liyang came to a similar conclusion based on these scores.
+That said, it's a bit hard to tell from this plot, because I'm unsure about the number of trials that went into the calculation of the dishonesty scores and hence the uncertainty around these estimates.
+Having the trial counts for each score would be very useful.
+
+For the moment, I'll continue with my recalculated scores based
+on all high-value trials and after excluding abberant trials.
+<!-- I think this is reasonable because after a few trials, participants will be able to anticipate the prompt rhythmically and can make their decision before the prompt---no need to respond to the prompt per se. -->
+
+I could forsee two manifestations of dishonesty in relatively high reward trials:
+
+1. Generally dishonest: Particiapnts tend to cheat on all trials
+2. Tempted dishonesty: Participants who tend to cheat on the highest reward trials
+
+From inspecting the average dishonesty scores, there is no indication that participants disproportionately cheat at the highest reward trials.
+
+```{r}
+#| label: reward-contigent-disonesty
+#| cache: true
+
+afex::set_sum_contrasts()
+reppag2009_blinded_filtered |>
+  mutate(
+    win = (correct == "win") |> as.numeric()
+    , reward = factor(reward)
+  ) |>
+  dplyr::filter(condition == "op") |>
+  afex::mixed(formula = win ~ reward + (reward | participant_id), data = _, family = binomial, method = "LRT")
+
+reppag2009_blinded_filtered |>
+  summarize(
+    dishonesty_high_score_no_fast = sum(correct == "win") / n()
+    , .by = c("participant_id", "condition", "reward")
+  ) |>
+  dplyr::filter(condition == "op") |>
+  mutate(reward = factor(reward)) |>
+  ggplot() +
+    aes(x = reward, y = dishonesty_high_score_no_fast, group = reward) +
+    geom_violin() +
+    stat_summary(geom = "pointrange") +
+    theme_minimal()
+```
+
+
+## Bayesian estimation of dishonesty
+
+```{r}
+dprior_beta_trunc <- function(x, a = 1, b = 1, lower = 0.5) {
+  dbeta(x, a, b) * (x >= lower) / lower
+}
+
+beta_binom_trunc <- function(x, a = 1, b = 1, s, n, lower = 0.5) {
+  stopifnot(s >= 0, n >= 0, s <= n)
+  stopifnot(x >= 0, x <= 1)
+  dprior_beta_trunc(x, a, b, lower) * dbinom(s, n, x)
+}
+
+dposterior_beta_trunc <- function(x, ..., lower = 0.5) {
+  beta_binom_trunc(x, ..., lower = lower) / integrate(beta_binom_trunc, ..., lower = lower, upper = 1)$value
+}
+
+rposterior_beta_trunc  <- function(x, ..., lower = 0.5) {
+  res <- x * (x > 1e3) + 1e3 * (x <= 1e3)
+  weights <- dposterior_beta_trunc(x = seq(lower, 1, length.out = res), ..., lower = lower)
+  sample(x = seq(lower, 1, length.out = res), prob = weights, replace = TRUE)[1:x]
+}
+
+pposterior_beta_trunc <- function(q, ..., lower = 0.5) {
+  integrate(dposterior_beta_trunc, ..., lower = lower, upper = q)$value
+}
+
+qposterior_beta_trunc <- function(p, ..., lower = 0.5) {
+  r <- rposterior_beta_trunc(1e4, ..., lower = lower)
+  
+  quantile(r, probs = p, na.rm = FALSE, names = TRUE, type = 7)
+}
+
+
+dposterior_beta_trunc <- Vectorize(dposterior_beta_trunc)
+pposterior_beta_trunc <- Vectorize(pposterior_beta_trunc)
+qposterior_beta_trunc <- Vectorize(qposterior_beta_trunc)
+```
+
+Bayesian estimates of the dishonesty parameter $\theta$ based on the cutoffs used by Paxton & Green (2009) show that these are too gracious.
+With 44 claimed wins out of 70 ($\hat\theta = `r papaja::apa_p(44/70)`$) the Bayes factor in favor of dishonesty is `r round(2 / dposterior_beta_trunc(0.5, s = 44, n = 70), 2)`; with 45 claimed wins ($\hat\theta = `r papaja::apa_p(45/70)`$) it increases to `r round(2 / dposterior_beta_trunc(0.5, s = 45, n = 70), 2)`.
+Similarly, some participants that Paxton & Green would have considered ambiguous exhibit moderate to strong evidence for dishonesty.
+
+@fig-disthonesty-eiv shows the naive Bayesian estimates of the dishonesty parameter $\theta$, assuming $\theta > .5$.
+Numbers on the right are log Bayes factors in favor of dishonesty.
+Grey values indicate $1/3 > \text{BF}_{10} > 3$, i.e. "not worth more than a bare mention" (Jeffreys, 1961).
+It is clear that these estimates are not particularly precise, owing to the limited number of trials.
+Hence, I believe this factor should explicitly be treated as measured in the analysis, i.e., the error in the dishonesty parameter should be propagated through the analysis.
+
+::: {.callout-warning}
+We see 12 participants for whom we find evidence of dishonesty in the opportunity trials.
+It is also striking that 7 of these 12 also exhibit substantial evidence for dishonesty in the no-opportunity trials.
+:::
+
+```{r}
+#| label: fig-disthonesty-eiv
+#| fig-cap: "Naive Bayesian posterior distributions of the dishonesty parameter $\\theta$, assuming $\\theta > .5$. Colored areas indicate posterior credible intervals with 66%, 80%, 90%, 95%, 99%, and 100% of the posterior mass. Points represent the relative frequency of wins."
+#| cache: true
+#| fig.height: 8
+#| fig.width: 7
+
+
+reppag2009_blinded_filtered |>
+  # dplyr::filter(region == "acc") |>
+  select(participant_id, condition, correct) |>
+  summarize(
+    trials = n()
+    , wins = sum(correct == "win")
+    , f = wins / trials
+    , bf = 2 / dposterior_beta_trunc(0.5, s = wins, n = trials)
+    , logbf = papaja::apa_num(log(bf))
+    , .by = c("participant_id", "condition")
+  ) |>
+  arrange(desc(condition), f) |> # Sort by dishonesty score
+  mutate(
+    participant_id = factor(participant_id, unique(participant_id))
+  ) |>
+  # filter(as.numeric(participant_id) %in% 1:3) |>
+  ggplot() +
+    aes(
+      y = participant_id
+      , xdist = dist_wrap(
+        "posterior_beta_trunc"
+        , a = 1
+        , b = 1
+        , s = wins
+        , n = trials
+        , lower = 0.5
+      )
+    ) +
+    geom_vline(xintercept = c(0.59, 0.69), linetype = "dashed") +
+    stat_slab(
+      aes(fill = after_stat(level)), .width = c(.66, .80, .90, .95, 1)
+      , show.legend = FALSE
+      , normalize = "xy"
+      , limits = c(0.5, 1)
+    ) +
+    geom_segment(aes(x = min(f), xend = 1)) +
+    geom_text(x = 1.1, aes(label = logbf, color = abs(log(bf)) > log(3)), show.legend = FALSE) +
+    geom_point(aes(x = f), fill = "black", color = "white", shape = 21, size = 2.5) +
+    scale_x_continuous(limits = c(NA, 1.15), name = "Probability (θ)") +
+    scale_y_discrete(name = "Participant ID") +
+    scale_color_grey(start = 0.8, end = 0.2) +
+    facet_grid(~ condition) +
+    papaja::theme_apa()
+```
+
+```{r}
+knitr::opts_chunk$set(eval = FALSE)
+```
+
+<!-- # Response times
+
+> There are two files in the attachment: the file named "data3_1500" is that the RT become 1500ms if the RT of the trial is longer than 1500ms;(2) the other file is the original one. The reason why we change 1500ms if it is longer than 1500ms is based on suggestions from Bruno.
+
+Another issue is how to treat fast responses.
+A previous version of the data set filtered at > 200 ms. -->
+
+
+```{r}
+reppag2009_blinded_filtered <- reppag2009_blinded |>
+  dplyr::filter(rt > 2) |>
+  dplyr::mutate(
+    extreme = if_else((rt > exp(mean(log(rt)) + 2.75 * sd(log(rt)))) | (rt < exp(mean(log(rt)) - 3.5 * sd(log(rt)))), "extreme", NA)
+    # extreme = if_else((rt > (median(rt) + 7*mad(rt))) | (rt < (median(rt) - 3*mad(rt))), "extreme", NA)
+    , .by = c("participant_id", "condition", "correct")
+  ) |>
+  dplyr::filter(is.na(extreme)) |>
+  dplyr::select(-extreme)
+
+pivot_longer(
+    cols = matches("^(right|left)")
+    , names_sep = "_"
+    , names_to = c("side", "region", "tmp")
+  ) |>
+  mutate(
+    tmp = if_else(is.na(tmp), "", tmp)
+    , region = paste0(region, tmp)
+  ) |>
+  select(-tmp) |>
+  rename(fmri_activity = value)
 ```

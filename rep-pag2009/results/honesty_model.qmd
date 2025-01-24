@@ -1,0 +1,156 @@
+---
+title: "Develop model of honesty score"
+author: "Frederik Aust"
+date: "`r Sys.Date()`"
+
+toc: true
+number-sections: true
+reference-location: margin
+
+highlight-style: github
+theme: lumen
+
+execute:
+  keep-md: true
+
+format:
+  html:
+    code-fold: true
+    standalone: true
+    embed-resources: true
+    self-contained: true
+    link-external-icon: true
+    citations-hover: true
+    footnotes-hover: true
+---
+
+In my preliminary analysis I realized that we cannot diagnose dishonesty based on the pure proportion of claimed wins because the even in the No-opportunity condition some participants claimed winning substantially more often than on 50% of the trials.
+The reason for this is that the tasks cannot be modelled by a simple beta-binomial model because it is unclear how many wins participants actually had.
+This two is a random variable.
+
+So I think we need to complicate the model.
+
+```{r}
+#| label: init
+#| include: false
+
+library("dplyr")
+library("tidyr")
+library("ggplot2")
+library("patchwork")
+library("ggforce")
+library("distributional")
+library("ggdist")
+library("brms")
+
+library("reppag2009")
+```
+
+The initial simple idea was to model the number of claimed wins as
+
+$$
+\begin{align*}
+y_i & \sim \text{Binomial}(n_i, \theta_i) \\
+\theta_i & \sim \text{Beta}(\alpha, \beta)^{[0.5, 1]}
+\end{align*}
+$$
+
+and assume that $\theta_i = 0.5$ when participants are honest.
+However, given that the proportion of true wins is a random variable, this model is not appropriate.
+The true probability of wins follows a binomial distribution, $\hat s_i \sim \text{Binomial}(0.5, n_i)$, where $n_i$ is the number of trials that a participant responded to.
+
+```{r}
+curve(
+  dbinom(x * 70, 70, 0.5)
+  , from = 0, to = 1
+  , lwd = 2
+  , axes = FALSE
+  , xlab = "Proportion of wins"
+  , ylab = "Density"
+  , main = bquote({theta == 0.5}*", "*{italic(n) == 70})
+  , n = 71
+  , type = "h"
+)
+
+axis(1)
+```
+
+```{r}
+n <- 1e7
+s <- rbinom(n, 70, 0.5)
+
+hist(s, breaks = 71, xlim = c(0, 70))
+curve(
+  dbinom(x, 70, 0.5) * n
+  , lwd = 2
+  , n = 71
+  , type = "h"
+  , add = TRUE
+)
+
+hist(rbinom(n, s, 0.4), breaks = 71, xlim = c(0, 70))
+curve(
+  dbinom(x, 70, 0.5) * n
+  , lwd = 2
+  , n = 71
+  , type = "h"
+  , add = TRUE
+)
+curve(
+  dbinom(x, 70, 0.5 * 0.4) * n
+  , lwd = 2
+  , n = 71
+  , type = "h"
+  , add = TRUE
+)
+```
+
+The following plot shows that when we assume that the true wins are always claimed as such and losses are claimed with probability $\lambda$, the number of claimed wins is distributed as $y \sim \text{Binomial}(70, 0.5 + (1-0.5) * \lambda)$.
+
+```{r}
+n <- 1e7
+lambda <- 0.2
+s <- rbinom(n, 70, 0.5)
+claimed <- rbinom(n, 70 - s, lambda)
+
+hist(s + claimed, breaks = 71, xlim = c(0, 70))
+curve(
+  dbinom(x, 70, 0.5 + (1-0.5)*lambda) * n
+  , lwd = 2
+  , n = 71
+  , type = "h"
+  , add = TRUE
+)
+```
+
+So without knowing the number of true wins, we can use this model to estimate overclaiming in the honesty condition.,
+It is unclear what this overclaiming means, but it seems rather unlikely that it is related to dishonesty.
+Hence, by modelling both conditions simultaneously we could model correct the dishonesty score for this overclaiming.
+
+Instead, we need to model the number of true wins as a random variable.
+
+$$
+\begin{align*}
+y_i & \sim \text{Binomial}(n_i, \theta_i) \\
+\theta_i & = \eta_i \cdot \psi_i \\
+\eta_i & = \hat s_i / n_i \\
+\hat s_i & \sim \text{Binomial}(0.5, n_i) \\
+\psi_i & \sim 
+\end{align*}
+$$
+
+```{stan output.var = "compiled_model"}
+data {
+ 
+}
+parameters {
+ 
+}
+model {
+  
+}
+```
+
+```{r}
+
+```
